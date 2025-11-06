@@ -1,0 +1,303 @@
+<!-- templates/detail.html -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>{{ author }} 的提交趋势</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        .chart-container {
+            position: relative;
+            height: 400px;
+            margin: 2rem 0;
+        }
+
+        .btn {
+            @apply px-4 py-2 rounded font-medium text-sm transition;
+        }
+
+        .btn-primary {
+            @apply bg-blue-600 hover:bg-blue-700 text-white;
+        }
+
+        .btn-outline {
+            @apply border border-gray-300 hover:bg-gray-50 text-gray-700;
+        }
+
+        .btn-active {
+            @apply bg-blue-100 border-blue-300 text-blue-700;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+<div class="max-w-6xl mx-auto p-6">
+
+    <!-- 页面标题 + 日期控件 -->
+    <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+
+            <!-- 开发者姓名 -->
+            <h1 class="text-2xl font-bold text-gray-800">
+                {{ author }}
+            </h1>
+
+            <!-- 日期控件 -->
+            <div class="flex flex-wrap gap-2">
+
+                <!-- 快捷按钮 -->
+                <div class="flex gap-1">
+                    <button class="btn btn-outline" data-days="7">过去7天</button>
+                    <button class="btn btn-outline" data-days="14">过去14天</button>
+                    <button class="btn btn-outline" data-days="30">过去30天</button>
+                    <button class="btn btn-outline" data-days="60">过去60天</button>
+                    <button class="btn btn-outline" data-days="180">过去半年</button>
+                </div>
+
+                <!-- 自定义日期 -->
+                <div class="flex gap-2 items-center">
+                    <input type="date" id="start_date" class="border rounded px-2 py-1 text-sm"/>
+                    <span class="text-gray-500 text-sm">至</span>
+                    <input type="date" id="end_date" class="border rounded px-2 py-1 text-sm"/>
+                    <button id="custom_submit" class="btn btn-primary text-sm">查询</button>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- 图表区域 -->
+    <div class="bg-white rounded-lg shadow-sm p-6">
+        <div class="chart-container">
+            <canvas id="trendChart"></canvas>
+        </div>
+
+        <!-- 返回按钮 -->
+        <div class="flex items-center gap-4">
+            <a href="/" class="btn btn-outline flex items-center gap-1">
+                ← 返回
+            </a>
+        </div>
+    </div>
+
+
+</div>
+
+<script>
+    // =============== 全局变量 ===============
+    const author = "{{ author }}";
+    let chart = null;
+
+    // =============== 工具函数 ===============
+    function formatDate(dateStr) {
+        return dateStr.replace(/-/g, '/');
+    }
+
+    function today() {
+        return new Date().toISOString().split('T')[0];
+    }
+
+    function yesterday() {
+        const d = new Date();
+        d.setDate(d.getDate() - 1);
+        return d.toISOString().split('T')[0];
+    }
+
+    function daysAgo(days) {
+        const d = new Date();
+        d.setDate(d.getDate() - days);
+        return d.toISOString().split('T')[0];
+    }
+
+    // =============== 初始化日期控件 ===============
+    document.getElementById('end_date').value = yesterday();
+    document.getElementById('start_date').value = daysAgo(6); // 默认过去7天
+
+    // =============== 快捷按钮事件 ===============
+    document.querySelectorAll('[data-days]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const days = parseInt(btn.dataset.days);
+            // 高亮当前按钮
+            document.querySelectorAll('[data-days]').forEach(b => b.classList.remove('btn-active'));
+            btn.classList.add('btn-active');
+
+            // 设置日期
+            document.getElementById('end_date').value = yesterday();
+            document.getElementById('start_date').value = daysAgo(days - 1);
+
+            // 请求数据
+            fetchData({days});
+        });
+    });
+
+    // 默认高亮“过去7天”
+    document.querySelector('[data-days="7"]').classList.add('btn-active');
+
+    // =============== 自定义查询 ===============
+    document.getElementById('custom_submit').addEventListener('click', () => {
+        const start = document.getElementById('start_date').value;
+        const end = document.getElementById('end_date').value;
+
+        if (!start || !end) {
+            alert('请选择起止日期');
+            return;
+        }
+
+        // 清除快捷按钮高亮
+        document.querySelectorAll('[data-days]').forEach(b => b.classList.remove('btn-active'));
+
+        fetchData({start_date: start, end_date: end});
+    });
+
+    // =============== 获取数据 ===============
+    async function fetchData(params) {
+        const queryParams = new URLSearchParams({
+            author: author,
+            ...params
+        });
+
+        try {
+            const res = await fetch(`/api/trends?${queryParams}`);
+            if (!res.ok) throw new Error(await res.text());
+
+            const data = await res.json();
+            renderChart(data);
+        } catch (err) {
+            console.error('获取数据失败:', err);
+            const errData = JSON.parse(err.message);
+            alert(errData.detail);
+        }
+    }
+
+    // =============== 渲染图表 ===============
+    function renderChart(data) {
+        const ctx = document.getElementById('trendChart').getContext('2d');
+
+        // 销毁旧图表
+        if (chart) chart.destroy();
+
+        // ✅ 保存原始数据（用于 tooltip）
+        const originalAdditions = data.additions;
+        const originalDeletions = data.deletions;
+
+        // ✅ 设置最大显示值
+        const MAX_DISPLAY = 3500;
+
+        // ✅ 用于绘图的数据：超过 3500 的值截断为 3500
+        const additionsForChart = originalAdditions.map(val => Math.min(val, MAX_DISPLAY));
+        const deletionsForChart = originalDeletions.map(val => Math.min(val, MAX_DISPLAY));
+
+        chart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: data.dates,
+                datasets: [
+                    {
+                        label: '新增代码行数 (Additions)',
+                        data: additionsForChart,
+                        backgroundColor: '#AED581',
+                        borderColor: '#AED581',
+                        borderWidth: 1,
+                        // ✅ 柱子顶部的点：0 值显示灰色边框
+                        pointBackgroundColor: 'transparent',
+                        pointBorderColor: function (context) {
+                            return originalAdditions[context.dataIndex] === 0 ? '#ccc' : '#AED581';
+                        },
+                        pointBorderWidth: 2,
+                        pointRadius: 4,
+                        pointHoverRadius: 6,
+                        showLine: true,
+                    },
+                    {
+                        label: '删除代码行数 (Deletions)',
+                        data: deletionsForChart,
+                        backgroundColor: '#E57373',
+                        borderColor: '#E57373',
+                        borderWidth: 1,
+                        pointBackgroundColor: 'transparent',
+                        pointBorderColor: function (context) {
+                            return originalDeletions[context.dataIndex] === 0 ? '#ccc' : '#E57373';
+                        },
+                        pointBorderWidth: 2,
+                        pointRadius: 4,
+                        pointHoverRadius: 6,
+                        showLine: true,
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                    },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        callbacks: {
+                            label: function (context) {
+                                // ✅ 显示原始值（即使被截断）
+                                const rawValue = context.datasetIndex === 0
+                                    ? originalAdditions[context.dataIndex]
+                                    : originalDeletions[context.dataIndex];
+
+                                // ✅ 可加提示：是否被截断
+                                const truncatedHint = rawValue > MAX_DISPLAY ? ' (已截断)' : '';
+                                return `${context.dataset.label}: ${rawValue} 行${truncatedHint}`;
+                            }
+                        }
+                    }
+                },
+                interaction: {
+                    mode: 'index',
+                    intersect: false
+                },
+                scales: {
+                    y: {
+                        // ✅ 固定 Y 轴最大值
+                        max: MAX_DISPLAY,
+                        // ✅ 可选：添加网格线，比如在 3500 处加一条红线提示“上限”
+                        grid: {
+                            display: true,
+                            color: function (context) {
+                                return context.tick.value === MAX_DISPLAY ? 'rgba(255, 0, 0, 0.5)' : 'rgba(0, 0, 0, 0.1)';
+                            },
+                            lineWidth: function (context) {
+                                return context.tick.value === MAX_DISPLAY ? 2 : 1;
+                            }
+                        },
+                        ticks: {
+                            callback: val => val + ' 行'
+                        },
+                        title: {
+                            display: true,
+                            text: '代码改变行数（上限：3500 行）'
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: '日期'
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // =============== 页面加载时初始化 ===============
+    window.addEventListener('DOMContentLoaded', () => {
+        // 默认加载过去7天数据
+        fetchData({days: 7});
+    });
+</script>
+</body>
+</html>

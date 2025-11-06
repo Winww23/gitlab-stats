@@ -1,0 +1,256 @@
+<!-- app/templates/dashboard.html -->
+
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>GitLab 提交统计</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .btn-group .btn {
+            font-size: 0.875rem;
+            padding: 0.25rem 0.5rem;
+        }
+
+        .table th, .table td {
+            vertical-align: middle;
+        }
+
+        .text-success {
+            color: #0d6efd !important;
+        }
+
+        .text-danger {
+            color: #dc3545 !important;
+        }
+    </style>
+</head>
+<body class="bg-light">
+
+<div class="container my-4">
+    <h1 class="mb-4">GitLab 提交统计 📊</h1>
+
+    <!-- 筛选区 -->
+    <div class="card p-3 mb-4">
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <div class="btn-group mb-2">
+                    {% set current_days = request.query_params.get('days') %}
+                    {% for d in [1, 7, 14, 30, 60, 180] %}
+                    <a href="?days={{ d }}"
+                       class="btn btn-sm {% if current_days == d %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                        最近{{ d }}天
+                    </a>
+                    {% endfor %}
+                </div>
+
+                <div class="input-group mb-2" style="width: 350px;">
+                    <input type="date" id="start_date" class="form-control form-control-sm"
+                           value="{{ request.query_params.get('start_date', '') }}">
+                    <span class="input-group-text">至</span>
+                    <input type="date" id="end_date" class="form-control form-control-sm"
+                           value="{{ request.query_params.get('end_date', '') }}">
+                    <button class="btn btn-sm btn-outline-secondary" onclick="applyCustomRange()">
+                        筛选
+                    </button>
+                </div>
+            </div>
+
+
+            <!-- 搜索输入框 -->
+            <div class="col-md-4 d-flex align-items-center" style="gap: 0.5rem;">
+                <form class="d-flex align-items-center w-100" method="get" style="flex-wrap: nowrap;">
+                    <!-- 保留当前筛选条件 -->
+                    {% if request.query_params.get('days') %}
+                    <input type="hidden" name="days" value="{{ request.query_params.get('days') }}">
+                    {% elif request.query_params.get('start_date') %}
+                    <input type="hidden" name="start_date" value="{{ request.query_params.get('start_date') }}">
+                    <input type="hidden" name="end_date" value="{{ request.query_params.get('end_date') }}">
+                    {% endif %}
+
+                    <!-- 搜索输入框（缩小宽度） -->
+                    <input
+                            type="text"
+                            name="search"
+                            class="form-control form-control-sm"
+                            placeholder="搜索开发者"
+                            value="{{ search }}"
+                            style="min-width: 120px; width: 160px;"
+                    />
+
+                    <!-- 搜索按钮 -->
+                    <button type="submit" class="btn btn-sm btn-primary">
+                        🔍
+                    </button>
+
+                    <!-- 导出 CSV 按钮 -->
+                    <a href="/export?{{ request.query_params | update_query() }}"
+                       class="btn btn-sm btn-outline-primary"
+                       target="_blank" style="white-space: nowrap;">
+                        📥 导出 CSV
+                    </a>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 排行榜表格 -->
+    <div class="card">
+        <div class="table-responsive">
+            <table class="table table-striped table-hover mb-0">
+                <thead class="table-light">
+                <tr>
+                    <th>排名</th>
+                    <th>姓名</th>
+                    <th>部门</th>
+                    <th>新增行数</th>
+                    <th>删除行数</th>
+                    <th>净增行数</th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for item in data %}
+                <tr>
+                    <td>{{ (page-1)*page_size+loop.index }}</td>
+                    <!-- 点击author_name就跳转到详情趋势图页面 -->
+                    <td>
+                        <a href="/detail?author={{ item.author_name }}"
+                           class="text-decoration-none fw-medium"
+                           style="position: relative; z-index: 10; font-weight: 500; color: #495057;"
+                           onclick="event.stopPropagation()"
+                           title="查看 {{ item.author_name }} 的提交点线图">
+                            {{ item.author_name }}
+                        </a>
+                    </td>
+                    <td>{{ item.department }}</td>
+                    <td>{{ "{:,}".format(item.additions) }}</td>
+                    <td>{{ "{:,}".format(item.deletions) }}</td>
+                    <td class="{{ 'text-success' if item.net_lines >= 0 else 'text-danger' }}">
+                        {{ '+' ~ item.net_lines if item.net_lines >= 0 else item.net_lines }}
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted">暂无数据</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 分页 -->
+        <div class="card-footer d-flex flex-wrap justify-content-between align-items-center">
+            <small class="mb-2 mb-md-0">共 {{ total }} 位开发者</small>
+
+            <!-- 当前页码信息 -->
+            <div class="text-center mb-2 mb-md-0">
+                <small>
+                    第 <strong>{{ page }}</strong> 页 / 共 <strong>{{ max_page }}</strong> 页
+                </small>
+            </div>
+
+
+            <!-- 分页按钮与跳转 -->
+            <div class="d-flex align-items-center">
+
+                <!-- 分页按钮：首页、上一页、下一页、末页 -->
+                <nav class="me-3">
+                    <ul class="pagination pagination-sm mb-0">
+                        <!-- 第一页 -->
+                        <li class="page-item {% if page == 1 %}disabled{% endif %}">
+                            <a class="page-link" href="?{{ request.query_params | update_query(page=1) }}"
+                               aria-label="First">
+                                ««
+                            </a>
+                        </li>
+
+                        <!-- 上一页 -->
+                        <li class="page-item {% if page == 1 %}disabled{% endif %}">
+                            <a class="page-link" href="?{{ request.query_params | update_query(page=page-1) }}"
+                               aria-label="Previous">
+                                «
+                            </a>
+                        </li>
+
+                        <!-- 下一页 -->
+                        <li class="page-item {% if page >= max_page %}disabled{% endif %}">
+                            <a class="page-link" href="?{{ request.query_params | update_query(page=page+1) }}"
+                               aria-label="Next">
+                                »
+                            </a>
+                        </li>
+
+                        <!-- 最后一页 -->
+                        <li class="page-item {% if page >= max_page %}disabled{% endif %}">
+                            <a class="page-link" href="?{{ request.query_params | update_query(page=max_page) }}"
+                               aria-label="Last">
+                                »»
+                            </a>
+                        </li>
+                    </ul>
+                </nav>
+
+                <!-- 页码跳转输入框 + 按钮 -->
+                <div class="input-group" style="width: 100px;">
+                    <input
+                            type="number"
+                            id="gotoPage"
+                            class="form-control form-control-sm"
+                            placeholder="页码"
+                            min="1"
+                            max="{{ max_page }}"
+                            value="{{ page }}"
+                    />
+                    <button class="btn btn-sm btn-outline-secondary" onclick="gotoPage()">
+                        跳转
+                    </button>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function applyCustomRange() {
+        const start = document.getElementById('start_date').value;
+        const end = document.getElementById('end_date').value;
+        if (start && end) {
+            const params = new URLSearchParams(window.location.search);
+            params.delete('days');
+            params.set('start_date', start);
+            params.set('end_date', end);
+            params.set('page', 1);
+            window.location.href = '?' + params.toString();
+        }
+    }
+
+    function gotoPage() {
+        const input = document.getElementById('gotoPage');
+        const pageNum = parseInt(input.value);
+        const MAX_PAGE = {{ max_page }};
+
+        if (!pageNum || pageNum < 1) {
+            alert('请输入有效的页码！');
+            input.value = 1;
+            return;
+        }
+
+        if (pageNum > MAX_PAGE) {
+            alert('超出最大页码！');
+            input.value = MAX_PAGE;
+            return;
+        }
+
+        // 保留所有现有参数，只更新 page
+        const params = new URLSearchParams(window.location.search);
+        params.set('page', pageNum);
+        window.location.href = '?' + params.toString();
+    }
+
+
+</script>
+
+</body>
+</html>
