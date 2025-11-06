@@ -85,13 +85,13 @@
 ## 4. 依赖与配置
 
 - **配置文件**：
-  - `gitlab_url`: `http://gitlab.irootech.com`
+  - `gitlab_url`: `****`
   - `mapping_file`: `mapping.xlsx`（路径）
 - **mapping.xlsx 文件结构**：
   | email (STRING) | name (STRING) |
   |----------------|---------------|
-  | dev1@irootech.com | 张三         |
-  | dev2@irootech.com | 李四         |
+  | dev1@xxx.com | 张三         |
+  | dev2@xxx.com | 李四         |
 
 ---
 
@@ -107,4 +107,4 @@
 ---
 
 **版本**：1.0  
-**最后更新**：2025年8月22日
+**最后更新**：2025年11月6日
